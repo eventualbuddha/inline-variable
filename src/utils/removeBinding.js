@@ -1,4 +1,4 @@
-import type { Binding, Patcher } from '../types';
+import type { ArrayPattern, Binding, Node, Patcher, Property, VariableDeclaration, VariableDeclarator } from '../types';
 
 /**
  * Remove the binding identifier and all its parents that can be removed. For
@@ -9,40 +9,35 @@ export default function removeBinding(binding: Binding, patcher: Patcher) {
   for (let i = 0; i < binding.parents.length; i++) {
     const node = binding.parents[i];
 
-    switch (node.type) {
-      case 'Identifier':
-      case 'Property':
-      case 'VariableDeclarator':
-        // Just let these go since they're handled elsewhere.
-        break;
-
-      case 'ObjectPattern':
-        const property = binding.parents[i - 1];
+    if (node.type === 'ObjectPattern') {
+      const property = binding.parents[i - 1];
+      if (property.type === 'Property') {
         removeListElement(node.properties, property, patcher);
-        if (node.properties.length > 0) {
-          return;
-        }
+      } else {
+        throw new Error(`BUG: parent before ${node.type} must be \`Property\`, but got \'${property.type}\``);
+      }
+      if (node.properties.length > 0) {
         break;
-
-      case 'ArrayPattern':
-        const element = binding.parents[i - 1];
-        nullifyListElement(node.elements, element, patcher);
-        if (node.elements.some(e => e !== null)) {
-          return;
-        }
+      }
+    } else if (node.type === 'ArrayPattern') {
+      const element = binding.parents[i - 1];
+      nullifyListElement(node.elements, element, patcher);
+      if (node.elements.some(e => e !== null)) {
         break;
-
-      case 'VariableDeclaration':
-        const declarator = binding.parents[i - 1];
+      }
+    } else if (node.type === 'VariableDeclaration') {
+      const declarator = binding.parents[i - 1];
+      if (declarator.type === 'VariableDeclarator') {
         removeListElement(node.declarations, declarator, patcher);
-        if (node.declarations.length > 0) {
-          return;
-        }
-        removeStatement(node, patcher);
+      } else {
+        throw new Error(`BUG: parent before ${node.type} must be \`VariableDeclarator\`, but got \'${declarator.type}\``);
+      }
+      if (node.declarations.length > 0) {
         break;
-
-      default:
-        throw new Error(`unexpected parent type: ${node.type}`);
+      }
+      removeStatement(node, patcher);
+    } else if (node.type !== 'Identifier' && node.type !== 'Property' && node.type !== 'VariableDeclarator') {
+      throw new Error(`unexpected parent type: ${node.type}`);
     }
   }
 }
@@ -50,7 +45,7 @@ export default function removeBinding(binding: Binding, patcher: Patcher) {
 /**
  * Remove a node from a list and its representation in the source code.
  */
-function removeListElement<T>(list: Array<T>, element: T, patcher: Patcher) {
+function removeListElement(list: Array<Node>, element: Node, patcher: Patcher) {
   const index = list.indexOf(element);
   if (index === 0) {
     const next = list[index + 1];
@@ -59,7 +54,9 @@ function removeListElement<T>(list: Array<T>, element: T, patcher: Patcher) {
     }
   } else {
     const last = list[index - 1];
-    patcher.remove(last.end, element.end);
+    if (last) {
+      patcher.remove(last.end, element.end);
+    }
   }
   list.splice(index, 1);
 }
@@ -67,7 +64,7 @@ function removeListElement<T>(list: Array<T>, element: T, patcher: Patcher) {
 /**
  * Replace a node in a list with null.
  */
-function nullifyListElement<T>(list: Array<T>, element: T, patcher: Patcher) {
+function nullifyListElement(list: Array<?Node>, element: Node, patcher: Patcher) {
   const index = list.indexOf(element);
   patcher.remove(element.start, element.end);
   list[index] = null;
@@ -77,24 +74,37 @@ function nullifyListElement<T>(list: Array<T>, element: T, patcher: Patcher) {
  * Remove an entire statement and, if it was the only non-whitespace on the
  * line, the whole line.
  */
-function removeStatement(node: Object, patcher: Patcher) {
-  let { start, end } = node;
-
-  const { original } = patcher;
-  let startOfLine = startOfLinePrecedingIndexWithOnlySpaces(original, start);
-  let endOfLine = endOfLineSucceedingIndexWithOnlySpaces(original, end);
-
-  if (startOfLine !== null && endOfLine !== null) {
-    // There's nothing else on the line, so remove the whole line.
-    start = startOfLine;
-    end = endOfLine;
-  }
-
+function removeStatement(node: Node, patcher: Patcher) {
+  const { start, end } = removableRangeForStatement(node, patcher.original);
   patcher.remove(start, end);
 
   // FIXME: Somehow remove `node` from its parent to make the AST correct.
-  Object.keys(node).forEach(key => delete node[key]);
-  node.type = 'EmptyStatement';
+  replace(node, { type: 'EmptyStatement' });
+}
+
+/**
+ * Replace the contents of `destination` with `source`.
+ */
+function replace(destination: Object, source: Object) {
+  Object.keys(destination).forEach(key => delete destination[key]);
+  Object.keys(source).forEach(key => destination[key] = source[key]);
+}
+
+/**
+ * Determine what part of the source to remove when removing `node`.
+ */
+function removableRangeForStatement(node: Node, source: string): { start: number, end: number } {
+  const { start, end } = node;
+
+  // See whether we can remove the whole line.
+  const startOfLine = startOfLinePrecedingIndexWithOnlySpaces(source, start);
+  const endOfLine = endOfLineSucceedingIndexWithOnlySpaces(source, end);
+
+  if (startOfLine != null && endOfLine != null) {
+    return { start: startOfLine, end: endOfLine };
+  } else {
+    return { start, end };
+  }
 }
 
 /**
