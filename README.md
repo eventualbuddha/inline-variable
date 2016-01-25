@@ -34,8 +34,9 @@ const patcher = new MagicString(source);
 const ast = parse(source, { sourceType: 'module' });
 const scopeManager = analyze(ast, { sourceType: 'module', ecmaVersion: 6 });
 const moduleScope = scopeManager.globalScope.childScopes[0];
+const PIVariable = moduleScope.variables[0];
 
-inline(moduleScope.variables[0], patcher);
+inline(PIVariable, patcher);
 console.log(patcher.toString());
 // let radius = 8;
 // let circumference = 2 * 3.14 * radius;
