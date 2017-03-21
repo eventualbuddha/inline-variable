@@ -1,5 +1,7 @@
 # inline-variable
 
+[![Greenkeeper badge](https://badges.greenkeeper.io/eventualbuddha/inline-variable.svg)](https://greenkeeper.io/)
+
 Inline variables in JavaScript programs.
 
 ## Install
